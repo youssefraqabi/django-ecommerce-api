@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 from .models import Category, Product
 
@@ -28,3 +30,10 @@ class ProductSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        
+    def validate_price(self, value):
+        if value <= Decimal("0.00"):
+            raise serializers.ValidationError(
+                     "Product price must be greater than zero."
+            )
+        return value

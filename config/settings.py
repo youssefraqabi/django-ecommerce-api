@@ -142,3 +142,6 @@ REST_FRAMEWORK = {
     ),
     "PAGE_SIZE":5,
 }
+
+LOGIN_REDIRECT_URL = "/api/products/"
+LOGOUT_REDIRECT_URL = "/api/products/"
