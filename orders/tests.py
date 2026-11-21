@@ -416,3 +416,130 @@ class OrderStatusUpdateTests(TestCase):
             self.order.status,
             Order.Status.PENDING
         )
+        
+    def test_valid_status_transition(self):
+        url = f"/api/orders/{self.order.id}/status/"
+
+        response = self.client.patch(
+            url,
+            {"status": "processing"},
+            format="json"
+        )
+
+    # Verify the request succeeds
+        self.assertEqual(response.status_code, 200)
+
+    # Verify the new status is saved
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+            self.order.status,
+            Order.Status.PROCESSING
+        )
+        
+    def test_cannot_skip_order_status_stages(self):
+        url = f"/api/orders/{self.order.id}/status/"
+
+        response = self.client.patch(
+            url,
+            {"status": "delivered"},
+            format="json"
+        )
+
+    # Invalid transition must be rejected
+        self.assertEqual(response.status_code, 400)
+
+    # Error should identify the status field
+        self.assertIn("status", response.data)
+
+    # Verify the order status remains unchanged
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+        self.order.status,
+        Order.Status.PENDING
+    )
+        
+    def test_delivered_order_cannot_return_to_pending(self):
+    # Set the order's initial status to delivered
+        self.order.status = Order.Status.DELIVERED
+        self.order.save(update_fields=["status"])
+
+        url = f"/api/orders/{self.order.id}/status/"
+
+    # Attempt to change delivered back to pending
+        response = self.client.patch(
+            url,
+            {"status": "pending"},
+            format="json"
+        )
+
+    # Invalid transition must be rejected
+        self.assertEqual(response.status_code, 400)
+
+    # Verify the response contains a validation error
+        self.assertIn("status", response.data)
+
+    # Verify the order remains delivered
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+            self.order.status,
+            Order.Status.DELIVERED
+        )
+        
+        
+    def test_cancelled_order_cannot_be_reopened(self):
+    # Set the order's initial status to cancelled
+        self.order.status = Order.Status.CANCELLED
+        self.order.save(update_fields=["status"])
+
+        url = f"/api/orders/{self.order.id}/status/"
+
+    # Attempt to reopen the cancelled order
+        response = self.client.patch(
+            url,
+            {"status": "processing"},
+            format="json"
+        )
+
+    # The transition must be rejected
+        self.assertEqual(response.status_code, 400)
+
+    # Verify the validation error
+        self.assertIn("status", response.data)
+
+    # Verify the order remains cancelled
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+            self.order.status,
+            Order.Status.CANCELLED
+        )
+        
+    def test_full_order_lifecycle(self):
+        url = f"/api/orders/{self.order.id}/status/"
+
+        transitions = [
+            Order.Status.PROCESSING,
+            Order.Status.SHIPPED,
+            Order.Status.DELIVERED,
+        ]
+
+        for new_status in transitions:
+            response = self.client.patch(
+                url,
+                {"status": new_status},
+                format="json"
+        )
+
+        # Each transition must succeed
+        self.assertEqual(response.status_code, 200)
+
+        # Verify the status was saved
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+            self.order.status,
+            new_status
+        )
