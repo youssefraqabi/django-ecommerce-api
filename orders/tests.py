@@ -277,3 +277,142 @@ class CheckoutTests(TestCase):
 
     # Both cart items must remain
         self.assertEqual(self.cart.items.count(), 2)
+        
+class OrderStatusUpdateTests(TestCase):
+
+    def setUp(self):
+        User = get_user_model()
+
+        # Create a regular customer
+        self.customer = User.objects.create_user(
+            username="ordercustomer",
+            password="TestPassword123!"
+        )
+
+        # Create a staff user
+        self.staff_user = User.objects.create_user(
+            username="orderstaff",
+            password="TestPassword123!",
+            is_staff=True
+        )
+
+        # Create an order belonging to the customer
+        self.order = Order.objects.create(
+            user=self.customer,
+            status=Order.Status.PENDING,
+            total_amount=Decimal("199.99")
+        )
+
+        # Authenticate as staff
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.staff_user)
+
+    def test_staff_can_update_order_status(self):
+        url = f"/api/orders/{self.order.id}/status/"
+
+        response = self.client.patch(
+            url,
+            {"status": "processing"},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+            self.order.status,
+            Order.Status.PROCESSING
+        )
+        
+    def test_customer_cannot_update_order_status(self):
+    # Authenticate as a regular customer
+        self.client.force_authenticate(user=self.customer)
+
+        url = f"/api/orders/{self.order.id}/status/"
+
+    # Attempt to update the order status
+        response = self.client.patch(
+            url,
+            {"status": "processing"},
+            format="json"
+    )
+
+    # Regular customers must be denied access
+        self.assertEqual(response.status_code, 403)
+
+    # Verify the order status remains unchanged
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+        self.order.status,
+        Order.Status.PENDING
+    )
+        
+    def test_unauthenticated_user_cannot_update_order_status(self):
+    # Remove authentication from the test client
+        self.client.force_authenticate(user=None)
+
+        url = f"/api/orders/{self.order.id}/status/"
+
+    # Attempt to update the order without authentication
+        response = self.client.patch(
+            url,
+            {"status": "processing"},
+            format="json"
+            )
+
+    # Unauthenticated users must receive HTTP 401
+        self.assertEqual(response.status_code, 401)
+
+    # Verify the order status remains unchanged
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+        self.order.status,
+        Order.Status.PENDING
+    )
+        
+    def test_staff_cannot_set_invalid_order_status(self):
+        url = f"/api/orders/{self.order.id}/status/"
+
+        response = self.client.patch(
+            url,
+            {"status": "unknown"},
+            format="json"
+        )
+
+    # Invalid status must be rejected
+        self.assertEqual(response.status_code, 400)
+
+    # Response should identify the invalid field
+        self.assertIn("status", response.data)
+
+    # Order status must remain unchanged
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+            self.order.status,
+            Order.Status.PENDING
+        )
+        
+    def test_staff_cannot_update_nonexistent_order(self):
+    # Use an order ID that does not exist
+        url = "/api/orders/99999/status/"
+
+        response = self.client.patch(
+            url,
+            {"status": "processing"},
+            format="json"
+        )
+
+    # The API must return 404 Not Found
+        self.assertEqual(response.status_code, 404)
+
+    # Verify the existing order remains unchanged
+        self.order.refresh_from_db()
+
+        self.assertEqual(
+            self.order.status,
+            Order.Status.PENDING
+        )

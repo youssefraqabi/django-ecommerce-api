@@ -3,16 +3,17 @@ from decimal import Decimal
 from django.db import transaction, DatabaseError
 from django.db.models import F
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView, UpdateAPIView
+
 
 from cart.models import Cart
 from products.models import Product
 from .models import Order, OrderItem
-from .serializers import OrderSerializer
+from .serializers import OrderSerializer, OrderStatusUpdateSerializer
 
 
 class CheckoutError(Exception):
@@ -129,3 +130,13 @@ class OrderDetailView(RetrieveAPIView):
         return Order.objects.filter(
             user=self.request.user
         ).prefetch_related("items")
+        
+class OrderStatusUpdateView(UpdateAPIView):
+    queryset = Order.objects.all()
+    serializer_class = OrderStatusUpdateSerializer
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAdminUser]
+    http_method_names = ["patch", "options"]
+    
+    def get_queryset(self):
+        return Order.objects.all()
