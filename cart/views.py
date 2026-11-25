@@ -1,5 +1,7 @@
 from django.db import transaction
 
+from django.shortcuts import get_object_or_404
+
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -42,9 +44,11 @@ class AddToCartView(generics.CreateAPIView):
         quantity = serializer.validated_data["quantity"]
 
         with transaction.atomic():
-            cart, _ = Cart.objects.get_or_create(
+            cart, _ = Cart.objects.select_for_update().get_or_create(
                 user=request.user
             )
+
+            product.refresh_from_db()
 
             item = CartItem.objects.filter(
                 cart=cart,
@@ -97,27 +101,35 @@ class UpdateCartItemView(generics.UpdateAPIView):
         ).select_related("product")
 
     def patch(self, request, *args, **kwargs):
-        item = self.get_object()
+        with transaction.atomic():
+            get_object_or_404(
+                Cart.objects.select_for_update(),
+                user=request.user
+            )
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+            item = self.get_object()
 
-        quantity = serializer.validated_data["quantity"]
+            serializer = self.get_serializer(
+                data=request.data
+            )
+            serializer.is_valid(raise_exception=True)
 
-        if not item.product.is_available:
-            raise ValidationError({
-                "product": "This product is unavailable."
-            })
+            quantity = serializer.validated_data["quantity"]
 
-        if quantity > item.product.stock:
-            raise ValidationError({
-                "quantity": "Not enough stock available."
-            })
+            if not item.product.is_available:
+                raise ValidationError({
+                    "product": "This product is unavailable."
+                })
 
-        item.quantity = quantity
-        item.save(update_fields=["quantity"])
+            if quantity > item.product.stock:
+                raise ValidationError({
+                    "quantity": "Not enough stock available."
+                })
 
-        return Response(CartItemSerializer(item).data)
+            item.quantity = quantity
+            item.save(update_fields=["quantity"])
+
+            return Response(CartItemSerializer(item).data)
     
 class DeleteCartItemView(generics.DestroyAPIView):
     authentication_classes = [JWTAuthentication]
@@ -127,3 +139,14 @@ class DeleteCartItemView(generics.DestroyAPIView):
         return CartItem.objects.filter(
             cart__user=self.request.user
         )
+
+    def destroy(self, request, *args, **kwargs):
+        with transaction.atomic():
+            get_object_or_404(
+                Cart.objects.select_for_update(),
+                user=request.user
+            )
+
+            return super().destroy(
+                request, *args, **kwargs
+            )

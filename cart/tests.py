@@ -8,6 +8,13 @@ from rest_framework.test import APIClient
 from products.models import Category, Product
 from .models import Cart, CartItem
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
+from django.db import close_old_connections, connections
+from django.test import TransactionTestCase
+from django.urls import reverse
+
 
 User = get_user_model()
 
@@ -222,4 +229,143 @@ class CartAPITests(TestCase):
         )
         self.assertTrue(
             CartItem.objects.filter(id=item.id).exists()
+        )
+        
+class CartConcurrencyTests(TransactionTestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="concurrent_customer",
+            password="TestPassword123!"
+        )
+
+        self.category = Category.objects.create(
+            name="Electronics",
+            slug="electronics"
+        )
+
+        self.product = Product.objects.create(
+            category=self.category,
+            name="Wireless Headphones",
+            slug="wireless-headphones",
+            price=Decimal("390.99"),
+            stock=10,
+            is_available=True
+        )
+
+        self.cart = Cart.objects.create(user=self.user)
+
+        self.add_url = reverse("cart-add-item")
+
+    def concurrent_add(self, quantity, barrier):
+        close_old_connections()
+
+        try:
+            user = User.objects.get(pk=self.user.pk)
+
+            client = APIClient()
+            client.force_authenticate(user=user)
+
+            barrier.wait(timeout=10)
+
+            response = client.post(
+                self.add_url,
+                {
+                    "product": self.product.pk,
+                    "quantity": quantity
+                },
+                format="json"
+            )
+
+            return response.status_code
+
+        finally:
+            connections.close_all()
+
+    def run_concurrent_adds(self, quantity1, quantity2):
+        barrier = Barrier(2)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future1 = executor.submit(
+                self.concurrent_add,
+                quantity1,
+                barrier
+            )
+
+            future2 = executor.submit(
+                self.concurrent_add,
+                quantity2,
+                barrier
+            )
+
+            return [
+                future1.result(timeout=30),
+                future2.result(timeout=30)
+            ]
+
+    def test_concurrent_add_same_product(self):
+        results = self.run_concurrent_adds(2, 3)
+
+        self.assertCountEqual(
+            results,
+            [
+                status.HTTP_201_CREATED,
+                status.HTTP_200_OK
+            ]
+        )
+
+        self.assertEqual(
+            CartItem.objects.filter(cart=self.cart).count(),
+            1
+        )
+
+        item = CartItem.objects.get(
+            cart=self.cart,
+            product=self.product
+        )
+
+        self.assertEqual(item.quantity, 5)
+
+    def test_concurrent_quantity_increment(self):
+        item = CartItem.objects.create(
+            cart=self.cart,
+            product=self.product,
+            quantity=2
+        )
+
+        results = self.run_concurrent_adds(3, 4)
+
+        self.assertEqual(
+            results,
+            [
+                status.HTTP_200_OK,
+                status.HTTP_200_OK
+            ]
+        )
+
+        item.refresh_from_db()
+
+        self.assertEqual(item.quantity, 9)
+
+    def test_concurrent_add_exceeds_stock(self):
+        results = self.run_concurrent_adds(6, 6)
+
+        self.assertCountEqual(
+            results,
+            [
+                status.HTTP_201_CREATED,
+                status.HTTP_400_BAD_REQUEST
+            ]
+        )
+
+        item = CartItem.objects.get(
+            cart=self.cart,
+            product=self.product
+        )
+
+        self.assertEqual(item.quantity, 6)
+
+        self.assertEqual(
+            CartItem.objects.filter(cart=self.cart).count(),
+            1
         )

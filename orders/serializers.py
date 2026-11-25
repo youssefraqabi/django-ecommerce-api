@@ -43,10 +43,6 @@ class OrderSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
         
-class OrderStatusUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Order
-        fields = ["status"]
         
 class OrderStatusUpdateSerializer(serializers.ModelSerializer):
     class Meta:

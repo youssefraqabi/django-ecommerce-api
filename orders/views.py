@@ -27,7 +27,7 @@ class CheckoutView(APIView):
     def post(self, request):
         try:
             with transaction.atomic():
-                cart = Cart.objects.filter(
+                cart = Cart.objects.select_for_update().filter(
                     user=request.user
                 ).first()
 
@@ -61,6 +61,8 @@ class CheckoutView(APIView):
                             f"{product.name} is unavailable "
                             "or has insufficient stock."
                         )
+                        
+                    product.refresh_from_db(fields=["price", "name"])
 
                     total_amount += (
                         product.price * item.quantity
@@ -139,4 +141,13 @@ class OrderStatusUpdateView(UpdateAPIView):
     http_method_names = ["patch", "options"]
     
     def get_queryset(self):
-        return Order.objects.all()
+        queryset = Order.objects.all()
+        
+        if self.request.method == "PATCH":
+            queryset = queryset.select_for_update()
+
+        return queryset
+
+    @transaction.atomic
+    def patch(self, request, *args, **kwargs):
+        return super().patch(request, *args, **kwargs)
